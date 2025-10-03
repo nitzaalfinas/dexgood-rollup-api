@@ -1,0 +1,101 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: dexgood-bridge-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: dexgood_bridge
+      POSTGRES_USER: bridge_user
+      POSTGRES_PASSWORD: bridge_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./DATABASE_PERSISTENCE:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bridge_user -d dexgood_bridge"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis for Queue
+  redis:
+    image: redis:7-alpine
+    container_name: dexgood-bridge-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Bridge Backend API
+  bridge-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dexgood-bridge-api
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env.development
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./logs:/app/logs
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health/live', (res) => process.exit(res.statusCode === 200 ? 0 : 1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Redis Commander (Optional - for Redis UI)
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: dexgood-redis-commander
+    restart: unless-stopped
+    environment:
+      REDIS_HOSTS: local:redis:6379
+    ports:
+      - "8081:8081"
+    depends_on:
+      - redis
+    profiles:
+      - tools
+
+  # pgAdmin (Optional - for PostgreSQL UI)
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: dexgood-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@dexgood.com
+      PGADMIN_DEFAULT_PASSWORD: admin123
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+    ports:
+      - "8080:80"
+    depends_on:
+      - postgres
+    profiles:
+      - tools
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  default:
+    name: dexgood-bridge-network

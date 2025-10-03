@@ -1,0 +1,126 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model BridgeDeposit {
+  id              String       @id @default(cuid())
+  depositId       String       @unique
+  user            String
+  token           String
+  amount          String       // Store as string to handle large numbers
+  sourceChain     ChainType
+  targetChain     ChainType
+  status          BridgeStatus @default(PENDING)
+  txHash          String
+  blockNumber     String
+  timestamp       DateTime
+  completedTxHash String?
+  completedAt     DateTime?
+  failureReason   String?
+  retryCount      Int          @default(0)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@map("bridge_deposits")
+  @@index([user])
+  @@index([status])
+  @@index([token])
+  @@index([timestamp])
+  @@index([sourceChain, targetChain])
+}
+
+model AdminUser {
+  id        String   @id @default(cuid())
+  username  String   @unique
+  email     String   @unique
+  password  String   // Hashed password
+  role      UserRole @default(ADMIN)
+  isActive  Boolean  @default(true)
+  lastLogin DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("admin_users")
+}
+
+model SystemMetrics {
+  id                String   @id @default(cuid())
+  totalDeposits     Int      @default(0)
+  totalVolume       String   @default("0") // Store as string for precision
+  completedBridges  Int      @default(0)
+  pendingBridges    Int      @default(0)
+  failedBridges     Int      @default(0)
+  averageProcessingTime Int  @default(0) // in milliseconds
+  date              DateTime @default(now())
+  createdAt         DateTime @default(now())
+
+  @@map("system_metrics")
+  @@index([date])
+}
+
+model TokenMetrics {
+  id        String   @id @default(cuid())
+  token     String
+  symbol    String
+  volume    String   @default("0")
+  count     Int      @default(0)
+  date      DateTime @default(now())
+  createdAt DateTime @default(now())
+
+  @@map("token_metrics")
+  @@unique([token, date])
+  @@index([date])
+  @@index([symbol])
+}
+
+model EventLog {
+  id          String    @id @default(cuid())
+  eventType   EventType
+  depositId   String?
+  txHash      String?
+  blockNumber String?
+  data        Json?
+  error       String?
+  createdAt   DateTime  @default(now())
+
+  @@map("event_logs")
+  @@index([eventType])
+  @@index([depositId])
+  @@index([createdAt])
+}
+
+enum ChainType {
+  L1
+  L2
+}
+
+enum BridgeStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum UserRole {
+  ADMIN
+  OPERATOR
+  VIEWER
+}
+
+enum EventType {
+  DEPOSIT_RECEIVED
+  MINT_INITIATED
+  MINT_COMPLETED
+  BRIDGE_FAILED
+  SYSTEM_ERROR
+  USER_ACTION
+}
