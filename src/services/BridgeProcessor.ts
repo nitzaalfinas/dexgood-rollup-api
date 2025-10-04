@@ -4,13 +4,14 @@ import { getDatabase } from '@/config/database';
 import { logger } from '@/utils/logger';
 import { L1DepositEvent, BridgeJob, BridgeStatus } from '@/types/bridge';
 
-// ABI for L2 Bridge Contract - Transfer ownership hanya via MetaMask/wallet signing untuk keamanan
+// ABI for L2 Bridge Contract (Library-based) - Transfer ownership hanya via MetaMask/wallet signing untuk keamanan
 const BRIDGE_L2_ABI = [
   "function releaseERC20(uint256 layerOneId, address layerOneToken, address to, uint256 amount, string memory name, string memory symbol) external",
   "function releaseETH(address to, uint256 amount) external",
   "event ReleaseERC20(uint256 indexed layerOneId, address to, address token, uint256 amount, uint256 timestamp)",
   "event ReleaseETH(address indexed to, uint256 amount, uint256 timestamp)",
-  "event OwnershipTransferred(address indexed previousAdmin, address indexed newAdmin)"
+  "event OwnershipTransferred(address indexed previousAdmin, address indexed newAdmin)",
+  "event TokenCreated(address indexed layerOneToken, string name, string symbol)"
 ];
 
 // ABI for ERC20 tokens to get name and symbol
@@ -120,7 +121,7 @@ export class BridgeProcessor {
         throw new Error('L2 contract not initialized');
       }
 
-      const tx = await this.l2Contract.releaseETH(
+      const tx = await (this.l2Contract as any).releaseETH(
         job.user,
         event.amount
       );
@@ -155,7 +156,7 @@ export class BridgeProcessor {
         throw new Error('L2 contract not initialized');
       }
 
-      const tx = await this.l2Contract.releaseERC20(
+      const tx = await (this.l2Contract as any).releaseERC20(
         event.depositId,
         job.token,
         job.user,
@@ -193,9 +194,9 @@ export class BridgeProcessor {
       const tokenContract = new ethers.Contract(tokenAddress, ERC20_ABI, l1Provider);
 
       const [name, symbol, decimals] = await Promise.all([
-        tokenContract.name(),
-        tokenContract.symbol(),
-        tokenContract.decimals()
+        (tokenContract as any).name(),
+        (tokenContract as any).symbol(),
+        (tokenContract as any).decimals()
       ]) as [string, string, number];
       
       return { name, symbol, decimals };
@@ -239,25 +240,25 @@ export class BridgeProcessor {
       // Validate the deposit
       await this.validateDeposit(job);
 
-      // Execute mint on L2
-      const mintTxHash = await this.executeMintOnL2(job);
+      // Execute release on L2 (already done in releaseToL2)
+      // No additional mint needed since releaseERC20/releaseETH already handles token creation and minting
 
       // Update status to completed
       await db.bridgeDeposit.update({
         where: { depositId: job.depositId },
         data: {
           status: BridgeStatus.COMPLETED,
-          completedTxHash: mintTxHash,
+          completedTxHash: job.txHash, // Use original L1 tx hash for reference
           completedAt: new Date(),
           updatedAt: new Date(),
         },
       });
 
       logger.info(`Bridge job completed for deposit ${job.depositId}`, {
-        mintTxHash,
+        originalTxHash: job.txHash,
       });
 
-      return { success: true, mintTxHash };
+      return { success: true, txHash: job.txHash };
 
     } catch (error) {
       logger.error(`Bridge job failed for deposit ${job.depositId}:`, error);
@@ -322,66 +323,6 @@ export class BridgeProcessor {
     }
     
     logger.info(`Deposit validation passed for ${job.depositId}`);
-  }
-
-  private async executeMintOnL2(job: BridgeJob): Promise<string> {
-    try {
-      const amount = BigInt(job.amount);
-      const isETH = job.token === ethers.ZeroAddress;
-      
-      let transaction;
-      
-      if (isETH) {
-        // Mint ETH
-        transaction = await this.l2Contract.mintETH(
-          job.user,
-          amount,
-          BigInt(job.depositId),
-          {
-            gasLimit: BigInt(process.env.GAS_LIMIT || '300000'),
-            maxFeePerGas: BigInt(ethers.parseUnits('20', 'gwei')),
-            maxPriorityFeePerGas: BigInt(ethers.parseUnits('2', 'gwei')),
-          }
-        );
-      } else {
-        // Mint ERC20 token
-        transaction = await this.l2Contract.mintToken(
-          job.user,
-          job.token,
-          amount,
-          BigInt(job.depositId),
-          {
-            gasLimit: BigInt(process.env.GAS_LIMIT || '300000'),
-            maxFeePerGas: BigInt(ethers.parseUnits('20', 'gwei')),
-            maxPriorityFeePerGas: BigInt(ethers.parseUnits('2', 'gwei')),
-          }
-        );
-      }
-
-      logger.info(`Mint transaction sent for deposit ${job.depositId}:`, {
-        txHash: transaction.hash,
-        gasLimit: transaction.gasLimit?.toString(),
-      });
-
-      // Wait for transaction confirmation
-      const receipt = await transaction.wait();
-      
-      if (receipt?.status !== 1) {
-        throw new Error(`Transaction failed: ${transaction.hash}`);
-      }
-
-      logger.info(`Mint transaction confirmed for deposit ${job.depositId}:`, {
-        txHash: transaction.hash,
-        gasUsed: receipt.gasUsed?.toString(),
-        blockNumber: receipt.blockNumber,
-      });
-
-      return transaction.hash;
-
-    } catch (error) {
-      logger.error(`Failed to execute mint on L2 for deposit ${job.depositId}:`, error);
-      throw error;
-    }
   }
 
   private calculateJobPriority(amount: bigint): number {
