@@ -12,8 +12,13 @@ import healthRoutes from '@/routes/health';
 import bridgeRoutes from '@/routes/bridge';
 import adminRoutes from '@/routes/admin';
 
+// Import bridge services
+import { BridgeEventListener } from '@/services/BridgeEventListener';
+import { BridgeProcessor } from '@/services/BridgeProcessor';
+import { initializeRedis } from '@/config/redis';
+
 // Load environment variables
-dotenv.config();
+dotenv.config({ path: '.env.development' });
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -63,11 +68,32 @@ app.use(notFound);
 // Error handler
 app.use(errorHandler);
 
+// Initialize bridge services
+let eventListener: BridgeEventListener;
+
 // Start server
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   logger.info(`🚀 Server is running on port ${PORT}`);
   logger.info(`📚 Health check: http://localhost:${PORT}/health/live`);
   logger.info(`🌐 API base URL: http://localhost:${PORT}/api`);
+  
+  // Initialize Redis and bridge services
+  try {
+    console.log('\n🔧 Initializing Redis...');
+    await initializeRedis();
+    console.log('✅ Redis initialized successfully!');
+    
+    console.log('🔧 Initializing Bridge Services...');
+    const bridgeProcessor = new BridgeProcessor();
+    eventListener = new BridgeEventListener(bridgeProcessor);
+    
+    console.log('🚀 Starting Bridge Event Listener...');
+    await eventListener.start();
+    console.log('✅ Bridge Event Listener started successfully!\n');
+  } catch (error) {
+    console.error('❌ Failed to start Bridge services:', error);
+    logger.error('Failed to start Bridge services:', error);
+  }
 });
 
 // Graceful shutdown

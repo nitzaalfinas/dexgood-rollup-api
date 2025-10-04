@@ -1,4 +1,4 @@
-import Redis from 'redis';
+import * as Redis from 'redis';
 import Queue from 'bull';
 import { logger } from '@/utils/logger';
 

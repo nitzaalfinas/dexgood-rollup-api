@@ -3,10 +3,11 @@ import { logger } from '@/utils/logger';
 import { BridgeProcessor } from './BridgeProcessor';
 import { L1DepositEvent } from '@/types/bridge';
 
-// ABI for L1 Bridge Contract events
+// ABI for L1 Bridge Contract - Transfer ownership hanya via MetaMask/wallet signing untuk keamanan
 const BRIDGE_L1_ABI = [
   "event DepositERC20(uint256 indexed depositId, address indexed user, address indexed token, uint256 amount, uint256 timestamp)",
   "event DepositETH(uint256 indexed depositId, address indexed user, uint256 amount, uint256 timestamp)",
+  "event OwnershipTransferred(address indexed previousAdmin, address indexed newAdmin)",
 ];
 
 export class BridgeEventListener {
@@ -19,15 +20,21 @@ export class BridgeEventListener {
   constructor(bridgeProcessor: BridgeProcessor) {
     this.bridgeProcessor = bridgeProcessor;
     
-    // Initialize L1 provider
     const l1RpcUrl = process.env.L1_RPC_URL;
+    logger.info(`L1_RPC_URL: ${l1RpcUrl}`);
     if (!l1RpcUrl) {
       throw new Error('L1_RPC_URL not configured');
     }
     
     this.l1Provider = new ethers.JsonRpcProvider(l1RpcUrl);
     
-    // Initialize L1 contract
+    console.log('🔌 Testing L1 RPC connection...');
+    this.l1Provider.getBlockNumber().then(blockNumber => {
+      console.log(`✅ L1 RPC connection successful. Current block: ${blockNumber}`);
+    }).catch(error => {
+      console.log('❌ L1 RPC connection failed:', error.message);
+    });
+    
     const l1BridgeContract = process.env.L1_BRIDGE_CONTRACT;
     if (!l1BridgeContract) {
       throw new Error('L1_BRIDGE_CONTRACT not configured');
@@ -47,35 +54,30 @@ export class BridgeEventListener {
         return;
       }
 
-      // Get the current block number
       const currentBlock = await this.l1Provider.getBlockNumber();
       this.lastProcessedBlock = currentBlock;
       
       logger.info(`Starting event listener from block ${currentBlock}`);
 
-      // Listen for DepositETH events
-      this.l1Contract.on('DepositETH', async (depositId, user, amount, timestamp, event) => {
-        await this.handleDepositETH(depositId, user, amount, timestamp, event);
-      });
+      console.log('🎧 Setting up DepositETH event listener...');
+      this.l1Contract.on('DepositETH', this.handleDepositETH.bind(this));
 
-      // Listen for DepositERC20 events
-      this.l1Contract.on('DepositERC20', async (depositId, user, token, amount, timestamp, event) => {
-        await this.handleDepositERC20(depositId, user, token, amount, timestamp, event);
-      });
-
-      // Handle provider errors
-      this.l1Provider.on('error', (error) => {
-        logger.error('L1 Provider error:', error);
-        this.handleProviderError(error);
-      });
+      console.log('🎧 Setting up DepositERC20 event listener...');
+      this.l1Contract.on('DepositERC20', this.handleDepositERC20.bind(this));
 
       this.isListening = true;
       logger.info('Bridge event listener started successfully');
+      console.log('🎯 BRIDGE EVENT LISTENER STARTED');
+      console.log('📡 Listening for L1 Bridge Events...');
+      console.log(`🔗 L1 Contract: ${process.env.L1_BRIDGE_CONTRACT}`);
+      console.log(`⛓️  Starting from block: ${currentBlock}`);
+      console.log('=' .repeat(60));
 
-      // Start periodic health check
       this.startHealthCheck();
+      await this.checkRecentEvents(currentBlock);
 
     } catch (error) {
+      console.log('❌ Failed to start event listener:', error);
       logger.error('Failed to start event listener:', error);
       throw error;
     }
@@ -84,7 +86,6 @@ export class BridgeEventListener {
   async stop(): Promise<void> {
     try {
       if (!this.isListening) {
-        logger.warn('Event listener is not running');
         return;
       }
 
@@ -95,63 +96,62 @@ export class BridgeEventListener {
       logger.info('Bridge event listener stopped');
     } catch (error) {
       logger.error('Error stopping event listener:', error);
-      throw error;
     }
   }
 
-  private async handleDepositETH(
-    depositId: bigint,
-    user: string,
-    amount: bigint,
-    timestamp: bigint,
-    event: ethers.EventLog
-  ): Promise<void> {
+  private async handleDepositETH(depositId: bigint, user: string, amount: bigint, timestamp: bigint, event: ethers.EventLog): Promise<void> {
     try {
+      console.log('\n🔥 NEW ETH DEPOSIT EVENT DETECTED!');
+      console.log('=' .repeat(50));
+      console.log(`💰 Deposit ID: ${depositId.toString()}`);
+      console.log(`👤 User: ${user}`);
+      console.log(`💎 Amount: ${ethers.formatEther(amount)} ETH`);
+      console.log(`⏰ Timestamp: ${new Date(Number(timestamp) * 1000).toISOString()}`);
+      console.log(`📦 Block: ${event.blockNumber || 'pending'}`);
+      console.log(`🔗 TX Hash: ${event.transactionHash || 'pending'}`);
+      console.log('=' .repeat(50));
+      
       logger.info('DepositETH event received:', {
         depositId: depositId.toString(),
         user,
         amount: ethers.formatEther(amount),
         timestamp: timestamp.toString(),
-        txHash: event.transactionHash,
-        blockNumber: event.blockNumber,
       });
 
       const depositEvent: L1DepositEvent = {
         depositId,
         user,
-        token: ethers.ZeroAddress, // ETH
+        token: ethers.ZeroAddress,
         amount,
         timestamp,
-        transactionHash: event.transactionHash,
-        blockNumber: BigInt(event.blockNumber),
+        transactionHash: event.transactionHash || 'unknown',
+        blockNumber: BigInt(event.blockNumber || 0),
       };
 
-      // Process the deposit
+      console.log('⚡ Processing ETH deposit...');
       await this.bridgeProcessor.processL1Deposit(depositEvent);
 
     } catch (error) {
+      console.log('❌ Error processing ETH deposit:', error);
       logger.error('Error handling DepositETH event:', error);
-      // TODO: Add error handling and retry mechanism
     }
   }
 
-  private async handleDepositERC20(
-    depositId: bigint,
-    user: string,
-    token: string,
-    amount: bigint,
-    timestamp: bigint,
-    event: ethers.EventLog
-  ): Promise<void> {
+  private async handleDepositERC20(depositId: bigint, user: string, token: string, amount: bigint, timestamp: bigint, event: ethers.EventLog): Promise<void> {
     try {
+      console.log('\n🪙 NEW ERC20 DEPOSIT EVENT DETECTED!');
+      console.log('=' .repeat(50));
+      console.log(`💰 Deposit ID: ${depositId.toString()}`);
+      console.log(`�� User: ${user}`);
+      console.log(`🏷️  Token: ${token}`);
+      console.log(`💎 Amount: ${amount.toString()}`);
+      console.log('=' .repeat(50));
+      
       logger.info('DepositERC20 event received:', {
         depositId: depositId.toString(),
         user,
         token,
         amount: amount.toString(),
-        timestamp: timestamp.toString(),
-        txHash: event.transactionHash,
-        blockNumber: event.blockNumber,
       });
 
       const depositEvent: L1DepositEvent = {
@@ -160,65 +160,61 @@ export class BridgeEventListener {
         token,
         amount,
         timestamp,
-        transactionHash: event.transactionHash,
-        blockNumber: BigInt(event.blockNumber),
+        transactionHash: event.transactionHash || 'unknown',
+        blockNumber: BigInt(event.blockNumber || 0),
       };
 
-      // Process the deposit
+      console.log('⚡ Processing ERC20 deposit...');
       await this.bridgeProcessor.processL1Deposit(depositEvent);
 
     } catch (error) {
+      console.log('❌ Error processing ERC20 deposit:', error);
       logger.error('Error handling DepositERC20 event:', error);
-      // TODO: Add error handling and retry mechanism
-    }
-  }
-
-  private async handleProviderError(error: Error): Promise<void> {
-    logger.error('Provider error occurred, attempting to reconnect...', error);
-    
-    try {
-      // Stop current listeners
-      await this.stop();
-      
-      // Wait before reconnecting
-      await new Promise(resolve => setTimeout(resolve, 5000));
-      
-      // Restart listeners
-      await this.start();
-      
-      logger.info('Successfully reconnected to provider');
-    } catch (reconnectError) {
-      logger.error('Failed to reconnect to provider:', reconnectError);
-      // TODO: Implement exponential backoff retry
     }
   }
 
   private startHealthCheck(): void {
-    // Check connection health every 30 seconds
     setInterval(async () => {
       try {
         const blockNumber = await this.l1Provider.getBlockNumber();
-        
         if (blockNumber > this.lastProcessedBlock) {
           this.lastProcessedBlock = blockNumber;
+          console.log(`💗 Health Check - L1 Block: ${blockNumber} (${new Date().toLocaleTimeString()})`);
           logger.debug(`Health check passed. Current block: ${blockNumber}`);
         }
       } catch (error) {
+        console.log('💔 Health check failed:', error);
         logger.error('Health check failed:', error);
-        await this.handleProviderError(error as Error);
       }
     }, 30000);
   }
 
-  public getStatus(): {
-    isListening: boolean;
-    lastProcessedBlock: number;
-    provider: string;
-  } {
+  private async checkRecentEvents(currentBlock: number): Promise<void> {
+    try {
+      const fromBlock = Math.max(0, currentBlock - 1000);
+      console.log(`🔎 Querying events from block ${fromBlock} to ${currentBlock}...`);
+      
+      const ethEvents = await this.l1Contract.queryFilter('DepositETH', fromBlock, currentBlock);
+      console.log(`📊 Found ${ethEvents.length} DepositETH events in recent blocks`);
+      
+      const erc20Events = await this.l1Contract.queryFilter('DepositERC20', fromBlock, currentBlock);
+      console.log(`📊 Found ${erc20Events.length} DepositERC20 events in recent blocks`);
+      
+      if (ethEvents.length > 0 || erc20Events.length > 0) {
+        console.log('✅ Events found! Event listener should be working.');
+      } else {
+        console.log('ℹ️  No recent events found. Waiting for new transactions...');
+      }
+    } catch (error) {
+      console.log('❌ Error checking recent events:', error);
+    }
+  }
+
+  public getStatus() {
     return {
       isListening: this.isListening,
       lastProcessedBlock: this.lastProcessedBlock,
-      provider: this.l1Provider.connection.url,
+      provider: process.env.L1_RPC_URL || 'Unknown',
     };
   }
 }

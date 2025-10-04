@@ -4,15 +4,25 @@ import { getDatabase } from '@/config/database';
 import { logger } from '@/utils/logger';
 import { L1DepositEvent, BridgeJob, BridgeStatus } from '@/types/bridge';
 
-// ABI for L2 Bridge Contract
+// ABI for L2 Bridge Contract - Transfer ownership hanya via MetaMask/wallet signing untuk keamanan
 const BRIDGE_L2_ABI = [
-  "function mintToken(address to, address token, uint256 amount, uint256 depositId) external",
-  "function mintETH(address to, uint256 amount, uint256 depositId) external payable",
+  "function releaseERC20(uint256 layerOneId, address layerOneToken, address to, uint256 amount, string memory name, string memory symbol) external",
+  "function releaseETH(address to, uint256 amount) external",
+  "event ReleaseERC20(uint256 indexed layerOneId, address to, address token, uint256 amount, uint256 timestamp)",
+  "event ReleaseETH(address indexed to, uint256 amount, uint256 timestamp)",
+  "event OwnershipTransferred(address indexed previousAdmin, address indexed newAdmin)"
+];
+
+// ABI for ERC20 tokens to get name and symbol
+const ERC20_ABI = [
+  "function name() view returns (string)",
+  "function symbol() view returns (string)",
+  "function decimals() view returns (uint8)"
 ];
 
 export class BridgeProcessor {
   private l2Provider: ethers.JsonRpcProvider;
-  private l2Contract: ethers.Contract;
+  private l2Contract!: ethers.Contract; // Definite assignment assertion - initialized in constructor
   private bridgeSigner: ethers.Wallet;
   private queue: any;
 
@@ -49,67 +59,153 @@ export class BridgeProcessor {
     this.initializeQueueProcessor();
   }
 
-  async processL1Deposit(depositEvent: L1DepositEvent): Promise<void> {
+  async processL1Deposit(event: L1DepositEvent): Promise<void> {
     try {
-      const db = getDatabase();
-      
-      // Check if deposit already exists
-      const existingDeposit = await db.bridgeDeposit.findUnique({
-        where: { depositId: depositEvent.depositId.toString() }
+      console.log('🔄 Processing L1 deposit for L2 release...');
+      logger.info('Processing L1 deposit event:', {
+        depositId: event.depositId.toString(),
+        user: event.user,
+        token: event.token,
+        amount: event.amount.toString(),
       });
 
-      if (existingDeposit) {
-        logger.warn(`Deposit ${depositEvent.depositId} already exists, skipping`);
-        return;
-      }
-
-      // Create bridge deposit record
-      const bridgeDeposit = await db.bridgeDeposit.create({
-        data: {
-          depositId: depositEvent.depositId.toString(),
-          user: depositEvent.user.toLowerCase(),
-          token: depositEvent.token.toLowerCase(),
-          amount: depositEvent.amount.toString(),
-          sourceChain: 'L1',
-          targetChain: 'L2',
-          status: BridgeStatus.PENDING,
-          txHash: depositEvent.transactionHash,
-          blockNumber: depositEvent.blockNumber.toString(),
-          timestamp: new Date(Number(depositEvent.timestamp) * 1000),
-          retryCount: 0,
-        },
-      });
-
-      logger.info('Bridge deposit created:', {
-        id: bridgeDeposit.id,
-        depositId: bridgeDeposit.depositId,
-        user: bridgeDeposit.user,
-        amount: bridgeDeposit.amount,
-      });
-
-      // Add job to queue for processing
-      const job: BridgeJob = {
-        depositId: bridgeDeposit.depositId,
-        user: bridgeDeposit.user,
-        token: bridgeDeposit.token,
-        amount: bridgeDeposit.amount,
+      // Create bridge job
+      const bridgeJob: BridgeJob = {
+        depositId: event.depositId.toString(),
+        user: event.user,
+        token: event.token,
+        amount: event.amount.toString(),
         sourceChain: 'L1',
         targetChain: 'L2',
-        txHash: bridgeDeposit.txHash,
-        blockNumber: bridgeDeposit.blockNumber,
+        txHash: event.transactionHash,
+        blockNumber: event.blockNumber.toString(),
       };
 
-      const queue = getBridgeQueue();
-      await queue.add('process-bridge', job, {
-        delay: 5000, // Wait 5 seconds before processing
-        priority: this.calculateJobPriority(BigInt(job.amount)),
-      });
+      // Process release to L2 immediately
+      await this.releaseToL2(event, bridgeJob);
 
-      logger.info(`Bridge job queued for deposit ${depositEvent.depositId}`);
-
+      logger.info('L1 deposit event processed successfully');
     } catch (error) {
-      logger.error('Error processing L1 deposit:', error);
+      console.log('❌ Error processing L1 deposit:', error);
+      logger.error('Error processing L1 deposit event:', error);
       throw error;
+    }
+  }
+
+  private async releaseToL2(event: L1DepositEvent, job: BridgeJob): Promise<void> {
+    try {
+      console.log(`🚀 Releasing to L2: ${job.token === ethers.ZeroAddress ? 'ETH' : 'ERC20'}`);
+      
+      if (job.token === ethers.ZeroAddress) {
+        // Release ETH to L2
+        await this.releaseETHToL2(event, job);
+      } else {
+        // Release ERC20 to L2
+        await this.releaseERC20ToL2(event, job);
+      }
+      
+      console.log('✅ L2 release completed successfully!');
+      
+    } catch (error) {
+      console.log('❌ L2 release failed:', error);
+      throw error;
+    }
+  }
+
+  private async releaseETHToL2(event: L1DepositEvent, job: BridgeJob): Promise<void> {
+    try {
+      console.log(`💎 Releasing ${ethers.formatEther(event.amount)} ETH to ${job.user}`);
+      
+      if (!this.l2Contract) {
+        throw new Error('L2 contract not initialized');
+      }
+
+      const tx = await this.l2Contract.releaseETH(
+        job.user,
+        event.amount
+      );
+      
+      console.log(`📤 ETH release transaction sent: ${tx.hash}`);
+      const receipt = await tx.wait();
+      console.log(`✅ ETH release confirmed in block: ${receipt.blockNumber}`);
+      console.log(`🌐 L2 Transaction: https://testnet-scan.dexgood.com/tx/${tx.hash}`);
+      
+      logger.info('ETH released to L2:', {
+        user: job.user,
+        amount: ethers.formatEther(event.amount),
+        txHash: tx.hash,
+        blockNumber: receipt.blockNumber
+      });
+      
+    } catch (error) {
+      logger.error('Error releasing ETH to L2:', error);
+      throw error;
+    }
+  }
+
+  private async releaseERC20ToL2(event: L1DepositEvent, job: BridgeJob): Promise<void> {
+    try {
+      console.log(`🪙 Releasing ERC20 token ${job.token} to ${job.user}`);
+      
+      // Get token info from L1
+      const tokenInfo = await this.getTokenInfo(job.token);
+      console.log(`📋 Token Info: ${tokenInfo.name} (${tokenInfo.symbol})`);
+      
+      if (!this.l2Contract) {
+        throw new Error('L2 contract not initialized');
+      }
+
+      const tx = await this.l2Contract.releaseERC20(
+        event.depositId,
+        job.token,
+        job.user,
+        event.amount,
+        tokenInfo.name,
+        tokenInfo.symbol
+      );
+      
+      console.log(`📤 ERC20 release transaction sent: ${tx.hash}`);
+      const receipt = await tx.wait();
+      console.log(`✅ ERC20 release confirmed in block: ${receipt.blockNumber}`);
+      console.log(`🌐 L2 Transaction: https://testnet-scan.dexgood.com/tx/${tx.hash}`);
+      
+      logger.info('ERC20 released to L2:', {
+        user: job.user,
+        token: job.token,
+        amount: event.amount.toString(),
+        name: tokenInfo.name,
+        symbol: tokenInfo.symbol,
+        txHash: tx.hash,
+        blockNumber: receipt.blockNumber
+      });
+      
+    } catch (error) {
+      logger.error('Error releasing ERC20 to L2:', error);
+      throw error;
+    }
+  }
+
+  private async getTokenInfo(tokenAddress: string): Promise<{name: string, symbol: string, decimals: number}> {
+    try {
+      console.log(`🔍 Getting token info for ${tokenAddress}`);
+      // Create L1 provider to get token info
+      const l1Provider = new ethers.JsonRpcProvider(process.env.L1_RPC_URL);
+      const tokenContract = new ethers.Contract(tokenAddress, ERC20_ABI, l1Provider);
+
+      const [name, symbol, decimals] = await Promise.all([
+        tokenContract.name(),
+        tokenContract.symbol(),
+        tokenContract.decimals()
+      ]) as [string, string, number];
+      
+      return { name, symbol, decimals };
+    } catch (error) {
+      logger.warn('Could not get token info, using defaults:', error);
+      return { 
+        name: `Bridged Token ${tokenAddress.slice(0, 6)}`,
+        symbol: `BT${tokenAddress.slice(-4)}`,
+        decimals: 18 
+      };
     }
   }
 
@@ -312,4 +408,6 @@ export class BridgeProcessor {
       failed: failed.length,
     };
   }
+
+
 }
