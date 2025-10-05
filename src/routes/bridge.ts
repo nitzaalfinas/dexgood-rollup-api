@@ -8,4 +8,8 @@ router.post('/deposit', BridgeController.processDeposit);
 router.get('/deposits/:address', BridgeController.getDeposits);
 router.get('/deposit/:txHash', BridgeController.getDepositStatus);
 
+// Debug endpoints
+router.post('/debug/scan-events', BridgeController.scanHistoricalEvents);
+router.get('/debug/status', BridgeController.getDebugStatus);
+
 export default router;

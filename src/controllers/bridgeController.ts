@@ -338,4 +338,110 @@ export class BridgeController {
 
     res.json(response);
   }
+
+  // Debug endpoint to scan historical events
+  static async scanHistoricalEvents(req: Request, res: Response) {
+    try {
+      const { fromBlock, toBlock } = req.body;
+      
+      if (!fromBlock || !toBlock) {
+        return res.status(400).json({
+          success: false,
+          error: 'fromBlock and toBlock are required'
+        });
+      }
+
+      console.log(`🔍 Manual scan requested: blocks ${fromBlock} to ${toBlock}`);
+      
+      // Initialize provider and contract
+      const l1Provider = new ethers.JsonRpcProvider(process.env.L1_RPC_URL);
+      const l1Contract = new ethers.Contract(
+        process.env.L1_BRIDGE_CONTRACT!,
+        [
+          "event DepositERC20(uint256 indexed depositId, address indexed user, address indexed token, uint256 amount, uint256 nonce, uint256 timestamp)",
+          "event DepositETH(uint256 indexed depositId, address indexed user, uint256 amount, uint256 nonce, uint256 timestamp)"
+        ],
+        l1Provider
+      );
+
+      // Query events
+      const [ethEvents, erc20Events] = await Promise.all([
+        l1Contract.queryFilter('DepositETH', parseInt(fromBlock), parseInt(toBlock)),
+        l1Contract.queryFilter('DepositERC20', parseInt(fromBlock), parseInt(toBlock))
+      ]);
+
+      console.log(`📊 Found ${ethEvents.length} ETH events and ${erc20Events.length} ERC20 events`);
+
+      const results = {
+        ethEvents: ethEvents.map(event => ({
+          depositId: event.args?.[0]?.toString(),
+          user: event.args?.[1],
+          amount: event.args?.[2]?.toString(),
+          nonce: event.args?.[3]?.toString(),
+          timestamp: event.args?.[4]?.toString(),
+          blockNumber: event.blockNumber,
+          transactionHash: event.transactionHash
+        })),
+        erc20Events: erc20Events.map(event => ({
+          depositId: event.args?.[0]?.toString(),
+          user: event.args?.[1],
+          token: event.args?.[2],
+          amount: event.args?.[3]?.toString(),
+          nonce: event.args?.[4]?.toString(),
+          timestamp: event.args?.[5]?.toString(),
+          blockNumber: event.blockNumber,
+          transactionHash: event.transactionHash
+        }))
+      };
+
+      res.json({
+        success: true,
+        data: {
+          fromBlock: parseInt(fromBlock),
+          toBlock: parseInt(toBlock),
+          totalEvents: ethEvents.length + erc20Events.length,
+          events: results
+        }
+      });
+
+    } catch (error) {
+      console.error('❌ Error scanning historical events:', error);
+      logger.error('Error scanning historical events:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to scan historical events'
+      });
+    }
+  }
+
+  // Debug status endpoint
+  static async getDebugStatus(req: Request, res: Response) {
+    try {
+      const l1Provider = new ethers.JsonRpcProvider(process.env.L1_RPC_URL);
+      const currentBlock = await l1Provider.getBlockNumber();
+      
+      res.json({
+        success: true,
+        data: {
+          currentBlock,
+          l1Contract: process.env.L1_BRIDGE_CONTRACT,
+          l2Contract: process.env.L2_BRIDGE_CONTRACT,
+          l1Rpc: process.env.L1_RPC_URL,
+          l2Rpc: process.env.L2_RPC_URL,
+          scanRange: {
+            suggested: {
+              from: currentBlock - 10000, // Last 10k blocks
+              to: currentBlock
+            }
+          }
+        }
+      });
+    } catch (error) {
+      logger.error('Error getting debug status:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to get debug status'
+      });
+    }
+  }
 }
