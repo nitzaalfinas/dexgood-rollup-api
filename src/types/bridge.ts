@@ -31,6 +31,7 @@ export interface L1DepositEvent {
   user: string;
   token: string;
   amount: bigint;
+  nonce: bigint;
   timestamp: bigint;
   transactionHash: string;
   blockNumber: bigint;

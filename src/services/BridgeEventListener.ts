@@ -4,9 +4,10 @@ import { BridgeProcessor } from './BridgeProcessor';
 import { L1DepositEvent } from '@/types/bridge';
 
 // ABI for L1 Bridge Contract - Transfer ownership hanya via MetaMask/wallet signing untuk keamanan
+// Updated ABI with nonce parameter to match new contract
 const BRIDGE_L1_ABI = [
-  "event DepositERC20(uint256 indexed depositId, address indexed user, address indexed token, uint256 amount, uint256 timestamp)",
-  "event DepositETH(uint256 indexed depositId, address indexed user, uint256 amount, uint256 timestamp)",
+  "event DepositERC20(uint256 indexed depositId, address indexed user, address indexed token, uint256 amount, uint256 nonce, uint256 timestamp)",
+  "event DepositETH(uint256 indexed depositId, address indexed user, uint256 amount, uint256 nonce, uint256 timestamp)",
   "event OwnershipTransferred(address indexed previousAdmin, address indexed newAdmin)",
 ];
 
@@ -99,13 +100,14 @@ export class BridgeEventListener {
     }
   }
 
-  private async handleDepositETH(depositId: bigint, user: string, amount: bigint, timestamp: bigint, event: ethers.EventLog): Promise<void> {
+  private async handleDepositETH(depositId: bigint, user: string, amount: bigint, nonce: bigint, timestamp: bigint, event: ethers.EventLog): Promise<void> {
     try {
       console.log('\n🔥 NEW ETH DEPOSIT EVENT DETECTED!');
       console.log('=' .repeat(50));
       console.log(`💰 Deposit ID: ${depositId.toString()}`);
       console.log(`👤 User: ${user}`);
       console.log(`💎 Amount: ${ethers.formatEther(amount)} ETH`);
+      console.log(`🔢 User Nonce: ${nonce.toString()}`);
       console.log(`⏰ Timestamp: ${new Date(Number(timestamp) * 1000).toISOString()}`);
       console.log(`📦 Block: ${event.blockNumber || 'pending'}`);
       console.log(`🔗 TX Hash: ${event.transactionHash || 'pending'}`);
@@ -115,6 +117,7 @@ export class BridgeEventListener {
         depositId: depositId.toString(),
         user,
         amount: ethers.formatEther(amount),
+        nonce: nonce.toString(),
         timestamp: timestamp.toString(),
       });
 
@@ -123,6 +126,7 @@ export class BridgeEventListener {
         user,
         token: ethers.ZeroAddress,
         amount,
+        nonce,
         timestamp,
         transactionHash: event.transactionHash || 'unknown',
         blockNumber: BigInt(event.blockNumber || 0),
@@ -137,14 +141,15 @@ export class BridgeEventListener {
     }
   }
 
-  private async handleDepositERC20(depositId: bigint, user: string, token: string, amount: bigint, timestamp: bigint, event: ethers.EventLog): Promise<void> {
+  private async handleDepositERC20(depositId: bigint, user: string, token: string, amount: bigint, nonce: bigint, timestamp: bigint, event: ethers.EventLog): Promise<void> {
     try {
       console.log('\n🪙 NEW ERC20 DEPOSIT EVENT DETECTED!');
       console.log('=' .repeat(50));
       console.log(`💰 Deposit ID: ${depositId.toString()}`);
-      console.log(`�� User: ${user}`);
+      console.log(`👤 User: ${user}`);
       console.log(`🏷️  Token: ${token}`);
       console.log(`💎 Amount: ${amount.toString()}`);
+      console.log(`🔢 User Nonce: ${nonce.toString()}`);
       console.log('=' .repeat(50));
       
       logger.info('DepositERC20 event received:', {
@@ -152,6 +157,7 @@ export class BridgeEventListener {
         user,
         token,
         amount: amount.toString(),
+        nonce: nonce.toString(),
       });
 
       const depositEvent: L1DepositEvent = {
@@ -159,6 +165,7 @@ export class BridgeEventListener {
         user,
         token,
         amount,
+        nonce,
         timestamp,
         transactionHash: event.transactionHash || 'unknown',
         blockNumber: BigInt(event.blockNumber || 0),

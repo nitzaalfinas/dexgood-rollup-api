@@ -4,14 +4,14 @@ import { getDatabase } from '@/config/database';
 import { logger } from '@/utils/logger';
 import { L1DepositEvent, BridgeJob, BridgeStatus } from '@/types/bridge';
 
-// ABI for L2 Bridge Contract (Library-based) - Transfer ownership hanya via MetaMask/wallet signing untuk keamanan
+// ABI for L2 Bridge Contract (Library-based) - Updated dengan function signature terbaru
 const BRIDGE_L2_ABI = [
-  "function releaseERC20(uint256 layerOneId, address layerOneToken, address to, uint256 amount, string memory name, string memory symbol) external",
-  "function releaseETH(address to, uint256 amount) external",
-  "event ReleaseERC20(uint256 indexed layerOneId, address to, address token, uint256 amount, uint256 timestamp)",
-  "event ReleaseETH(address indexed to, uint256 amount, uint256 timestamp)",
-  "event OwnershipTransferred(address indexed previousAdmin, address indexed newAdmin)",
-  "event TokenCreated(address indexed layerOneToken, string name, string symbol)"
+  "function depositERC20(uint256 l1DepositId, address l1Token, address to, uint256 amount, string memory name, string memory symbol) external",
+  "function depositETH(uint256 l1DepositId, address to, uint256 amount) external",
+  "event DepositERC20(uint256 indexed depositId, uint256 indexed l1DepositId, address indexed to, address l1Token, address l2Token, uint256 amount, uint256 timestamp)",
+  "event DepositETH(uint256 indexed depositId, address indexed to, uint256 amount, uint256 timestamp)",
+  "event TokenCreated(address indexed l1Token, address indexed l2Token, string name, string symbol)",
+  "event OwnershipTransferred(address indexed previousAdmin, address indexed newAdmin)"
 ];
 
 // ABI for ERC20 tokens to get name and symbol
@@ -68,7 +68,11 @@ export class BridgeProcessor {
         user: event.user,
         token: event.token,
         amount: event.amount.toString(),
+        nonce: event.nonce.toString(),
       });
+
+      // Save deposit to database
+      await this.saveBridgeDeposit(event);
 
       // Create bridge job
       const bridgeJob: BridgeJob = {
@@ -121,17 +125,18 @@ export class BridgeProcessor {
         throw new Error('L2 contract not initialized');
       }
 
-      const tx = await (this.l2Contract as any).releaseETH(
+      const tx = await (this.l2Contract as any).depositETH(
+        event.depositId,
         job.user,
         event.amount
       );
       
-      console.log(`📤 ETH release transaction sent: ${tx.hash}`);
+      console.log(`📤 ETH deposit transaction sent: ${tx.hash}`);
       const receipt = await tx.wait();
-      console.log(`✅ ETH release confirmed in block: ${receipt.blockNumber}`);
+      console.log(`✅ ETH deposit confirmed in block: ${receipt.blockNumber}`);
       console.log(`🌐 L2 Transaction: https://testnet-scan.dexgood.com/tx/${tx.hash}`);
       
-      logger.info('ETH released to L2:', {
+      logger.info('ETH deposited to L2:', {
         user: job.user,
         amount: ethers.formatEther(event.amount),
         txHash: tx.hash,
@@ -156,7 +161,7 @@ export class BridgeProcessor {
         throw new Error('L2 contract not initialized');
       }
 
-      const tx = await (this.l2Contract as any).releaseERC20(
+      const tx = await (this.l2Contract as any).depositERC20(
         event.depositId,
         job.token,
         job.user,
@@ -165,12 +170,12 @@ export class BridgeProcessor {
         tokenInfo.symbol
       );
       
-      console.log(`📤 ERC20 release transaction sent: ${tx.hash}`);
+      console.log(`📤 ERC20 deposit transaction sent: ${tx.hash}`);
       const receipt = await tx.wait();
-      console.log(`✅ ERC20 release confirmed in block: ${receipt.blockNumber}`);
+      console.log(`✅ ERC20 deposit confirmed in block: ${receipt.blockNumber}`);
       console.log(`🌐 L2 Transaction: https://testnet-scan.dexgood.com/tx/${tx.hash}`);
       
-      logger.info('ERC20 released to L2:', {
+      logger.info('ERC20 deposited to L2:', {
         user: job.user,
         token: job.token,
         amount: event.amount.toString(),
@@ -332,6 +337,38 @@ export class BridgeProcessor {
     if (ethAmount >= 100) return 1;   // High priority
     if (ethAmount >= 10) return 5;    // Medium priority
     return 10;                        // Normal priority
+  }
+
+  private async saveBridgeDeposit(event: L1DepositEvent): Promise<void> {
+    const db = getDatabase();
+    
+    try {
+      await db.bridgeDeposit.create({
+        data: {
+          depositId: event.depositId.toString(),
+          user: event.user.toLowerCase(),
+          token: event.token.toLowerCase(),
+          amount: event.amount.toString(),
+          ...(event.nonce && { nonce: event.nonce.toString() }),
+          sourceChain: 'L1',
+          targetChain: 'L2',
+          status: 'PENDING',
+          txHash: event.transactionHash,
+          blockNumber: event.blockNumber.toString(),
+          timestamp: new Date(Number(event.timestamp) * 1000),
+        },
+      });
+      
+      logger.info(`Deposit saved to database: ${event.depositId.toString()}`);
+    } catch (error) {
+      // Handle duplicate entries gracefully
+      if (error instanceof Error && error.message.includes('unique constraint')) {
+        logger.warn(`Duplicate deposit ID ${event.depositId.toString()}, skipping database save`);
+      } else {
+        logger.error('Error saving deposit to database:', error);
+        throw error;
+      }
+    }
   }
 
   public async getQueueStats(): Promise<any> {

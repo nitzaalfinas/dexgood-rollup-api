@@ -16,6 +16,7 @@ model BridgeDeposit {
   user            String
   token           String
   amount          String       // Store as string to handle large numbers
+  nonce           String?      // User nonce for enhanced security
   sourceChain     ChainType
   targetChain     ChainType
   status          BridgeStatus @default(PENDING)

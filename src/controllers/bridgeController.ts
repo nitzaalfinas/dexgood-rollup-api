@@ -266,26 +266,29 @@ export class BridgeController {
         l2Address: ethers.ZeroAddress,
         minBridgeAmount: ethers.parseEther('0.001').toString(),
         maxBridgeAmount: ethers.parseEther('1000').toString(),
+        hasNonce: true, // Menunjukkan dukungan nonce system
       },
       {
         symbol: 'USDT',
         name: 'Tether USD',
         decimals: 6,
         isNative: false,
-        l1Address: '0x...', // TODO: Add actual addresses
-        l2Address: '0x...',
+        l1Address: '0x7169D38820dfd117C3FA1f22a697dba58d90BA06', // Sepolia USDT
+        l2Address: '0x...', // Will be created dynamically
         minBridgeAmount: '1000000', // 1 USDT
         maxBridgeAmount: '1000000000000', // 1M USDT
+        hasNonce: true,
       },
       {
         symbol: 'USDC',
         name: 'USD Coin',
         decimals: 6,
         isNative: false,
-        l1Address: '0x...',
-        l2Address: '0x...',
+        l1Address: '0x94a9D9AC8a22534E3FaCa9F4e7F2E2cf85d5E4C8', // Sepolia USDC  
+        l2Address: '0x...', // Will be created dynamically
         minBridgeAmount: '1000000', // 1 USDC
         maxBridgeAmount: '1000000000000', // 1M USDC
+        hasNonce: true,
       },
     ];
 
