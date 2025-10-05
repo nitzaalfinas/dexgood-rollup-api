@@ -10,12 +10,8 @@ COPY package*.json ./
 COPY tsconfig.json ./
 RUN npm install
 
-# Copy source code & prisma schema
+# Copy source code
 COPY ./src ./src
-COPY ./prisma ./prisma
-
-# Generate Prisma client
-RUN npx prisma generate
 
 # Create logs directory
 RUN mkdir -p logs

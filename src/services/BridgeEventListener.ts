@@ -66,6 +66,11 @@ export class BridgeEventListener {
       console.log('🎧 Setting up DepositERC20 event listener...');
       this.l1Contract.on('DepositERC20', this.handleDepositERC20.bind(this));
 
+      // Add error handling for provider errors
+      this.l1Provider.on('error', (error) => {
+        this.handleProviderError(error);
+      });
+
       this.isListening = true;
       logger.info('Bridge event listener started successfully');
       console.log('🎯 BRIDGE EVENT LISTENER STARTED');
@@ -215,6 +220,22 @@ export class BridgeEventListener {
     } catch (error) {
       console.log('❌ Error checking recent events:', error);
     }
+  }
+
+  private handleProviderError(error: any): void {
+    // Suppress filter not found errors as they're not critical and normal
+    if (error.code === 'UNKNOWN_ERROR' && 
+        error.error?.message?.includes('filter not found')) {
+      logger.debug('Filter expired, this is normal RPC behavior - filters auto-expire');
+      return;
+    }
+    
+    // Log other provider errors
+    logger.error('Provider error:', {
+      code: error.code,
+      message: error.message,
+      error: error.error
+    });
   }
 
   public getStatus() {

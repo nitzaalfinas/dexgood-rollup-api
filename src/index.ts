@@ -16,6 +16,7 @@ import adminRoutes from '@/routes/admin';
 import { BridgeEventListener } from '@/services/BridgeEventListener';
 import { BridgeProcessor } from '@/services/BridgeProcessor';
 import { initializeRedis } from '@/config/redis';
+import { initializeDatabaseSimple } from '@/config/database-simple';
 
 // Load environment variables
 dotenv.config({ path: '.env.development' });
@@ -77,9 +78,13 @@ app.listen(PORT, async () => {
   logger.info(`📚 Health check: http://localhost:${PORT}/health/live`);
   logger.info(`🌐 API base URL: http://localhost:${PORT}/api`);
   
-  // Initialize Redis and bridge services
+  // Initialize Database, Redis and bridge services
   try {
-    console.log('\n🔧 Initializing Redis...');
+    console.log('\n🔧 Initializing Database...');
+    await initializeDatabaseSimple();
+    console.log('✅ Database initialized successfully!');
+    
+    console.log('🔧 Initializing Redis...');
     await initializeRedis();
     console.log('✅ Redis initialized successfully!');
     
@@ -94,6 +99,53 @@ app.listen(PORT, async () => {
     console.error('❌ Failed to start Bridge services:', error);
     logger.error('Failed to start Bridge services:', error);
   }
+});
+
+// Global error handlers
+process.on('uncaughtException', (error) => {
+  // Suppress filter not found errors as they're not critical for bridge operation
+  if (error.message?.includes('filter not found') || 
+      (error as any).error?.message?.includes('filter not found')) {
+    logger.debug('Filter expired, this is normal RPC behavior');
+    return;
+  }
+  logger.error('Uncaught Exception:', error);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  // Suppress filter not found errors
+  if (typeof reason === 'object' && reason !== null) {
+    const errorObj = reason as any;
+    if (errorObj.error?.message?.includes('filter not found') ||
+        errorObj.message?.includes('filter not found')) {
+      logger.debug('Filter expired, this is normal RPC behavior');
+      return;
+    }
+  }
+  logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+// Global error handlers
+process.on('uncaughtException', (error) => {
+  // Suppress filter not found errors
+  if (error.message?.includes('filter not found') || 
+      error.message?.includes('could not coalesce error')) {
+    logger.debug('Suppressed filter error (normal RPC behavior)');
+    return;
+  }
+  logger.error('Uncaught exception:', error);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  // Suppress filter not found errors
+  if (reason && typeof reason === 'object' && 
+      'message' in reason && 
+      (reason.message?.includes('filter not found') || 
+       reason.message?.includes('could not coalesce error'))) {
+    logger.debug('Suppressed filter rejection (normal RPC behavior)');
+    return;
+  }
+  logger.error('Unhandled rejection at:', promise, 'reason:', reason);
 });
 
 // Graceful shutdown

@@ -1,6 +1,6 @@
 import { ethers } from 'ethers';
 import { getBridgeQueue } from '@/config/redis';
-import { getDatabase } from '@/config/database';
+import { SimpleBridgeDB } from '@/config/database-simple';
 import { logger } from '@/utils/logger';
 import { L1DepositEvent, BridgeJob, BridgeStatus } from '@/types/bridge';
 
@@ -225,19 +225,11 @@ export class BridgeProcessor {
   }
 
   private async processBridgeJob(job: BridgeJob): Promise<any> {
-    const db = getDatabase();
-    
     try {
       logger.info(`Processing bridge job for deposit ${job.depositId}`);
 
       // Update status to processing
-      await db.bridgeDeposit.update({
-        where: { depositId: job.depositId },
-        data: { 
-          status: BridgeStatus.PROCESSING,
-          updatedAt: new Date(),
-        },
-      });
+      await SimpleBridgeDB.updateDepositStatus(job.depositId, 'PROCESSING');
 
       // Wait for sufficient confirmations
       await this.waitForConfirmations(job.txHash, job.blockNumber);
@@ -249,15 +241,7 @@ export class BridgeProcessor {
       // No additional mint needed since releaseERC20/releaseETH already handles token creation and minting
 
       // Update status to completed
-      await db.bridgeDeposit.update({
-        where: { depositId: job.depositId },
-        data: {
-          status: BridgeStatus.COMPLETED,
-          completedTxHash: job.txHash, // Use original L1 tx hash for reference
-          completedAt: new Date(),
-          updatedAt: new Date(),
-        },
-      });
+      await SimpleBridgeDB.updateDepositStatus(job.depositId, 'COMPLETED', job.txHash);
 
       logger.info(`Bridge job completed for deposit ${job.depositId}`, {
         originalTxHash: job.txHash,
@@ -268,23 +252,9 @@ export class BridgeProcessor {
     } catch (error) {
       logger.error(`Bridge job failed for deposit ${job.depositId}:`, error);
 
-      // Update retry count and status
-      const currentDeposit = await db.bridgeDeposit.findUnique({
-        where: { depositId: job.depositId }
-      });
-
-      const retryCount = (currentDeposit?.retryCount || 0) + 1;
-      const maxRetries = parseInt(process.env.JOB_RETRY_ATTEMPTS || '3');
-
-      await db.bridgeDeposit.update({
-        where: { depositId: job.depositId },
-        data: {
-          status: retryCount >= maxRetries ? BridgeStatus.FAILED : BridgeStatus.PENDING,
-          retryCount,
-          failureReason: error instanceof Error ? error.message : 'Unknown error',
-          updatedAt: new Date(),
-        },
-      });
+      // Update status to failed
+      const failureReason = error instanceof Error ? error.message : 'Unknown error';
+      await SimpleBridgeDB.updateDepositStatus(job.depositId, 'FAILED', undefined, failureReason);
 
       throw error;
     }
@@ -340,34 +310,22 @@ export class BridgeProcessor {
   }
 
   private async saveBridgeDeposit(event: L1DepositEvent): Promise<void> {
-    const db = getDatabase();
-    
     try {
-      await db.bridgeDeposit.create({
-        data: {
-          depositId: event.depositId.toString(),
-          user: event.user.toLowerCase(),
-          token: event.token.toLowerCase(),
-          amount: event.amount.toString(),
-          ...(event.nonce && { nonce: event.nonce.toString() }),
-          sourceChain: 'L1',
-          targetChain: 'L2',
-          status: 'PENDING',
-          txHash: event.transactionHash,
-          blockNumber: event.blockNumber.toString(),
-          timestamp: new Date(Number(event.timestamp) * 1000),
-        },
+      await SimpleBridgeDB.saveBridgeDeposit({
+        depositId: event.depositId.toString(),
+        userAddress: event.user,
+        tokenAddress: event.token,
+        amount: event.amount.toString(),
+        nonce: event.nonce?.toString(),
+        txHash: event.transactionHash,
+        blockNumber: event.blockNumber.toString(),
+        timestamp: new Date(Number(event.timestamp) * 1000),
       });
       
       logger.info(`Deposit saved to database: ${event.depositId.toString()}`);
     } catch (error) {
-      // Handle duplicate entries gracefully
-      if (error instanceof Error && error.message.includes('unique constraint')) {
-        logger.warn(`Duplicate deposit ID ${event.depositId.toString()}, skipping database save`);
-      } else {
-        logger.error('Error saving deposit to database:', error);
-        throw error;
-      }
+      logger.error('Error saving deposit to database:', error);
+      throw error;
     }
   }
 

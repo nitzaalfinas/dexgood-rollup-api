@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { getDatabase } from '@/config/database';
+import { getDatabaseSimple } from '@/config/database-simple';
 import { logger } from '@/utils/logger';
 import { ApiResponse, PaginatedResponse, BridgeStats } from '@/types/bridge';
 import { AppError } from '@/middleware/errorHandler';
@@ -108,41 +108,12 @@ export class BridgeController {
 
   async getUserDeposits(req: Request, res: Response): Promise<void> {
     const { userAddress } = req.params;
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 10;
-    const offset = (page - 1) * limit;
-
-    if (!ethers.isAddress(userAddress)) {
-      throw new AppError('Invalid user address', 400);
-    }
-
-    const db = getDatabase();
-
-    const [deposits, total] = await Promise.all([
-      db.bridgeDeposit.findMany({
-        where: { user: userAddress.toLowerCase() },
-        orderBy: { createdAt: 'desc' },
-        skip: offset,
-        take: limit,
-      }),
-      db.bridgeDeposit.count({
-        where: { user: userAddress.toLowerCase() },
-      }),
-    ]);
-
-    const totalPages = Math.ceil(total / limit);
-
-    const response: PaginatedResponse<typeof deposits[0]> = {
+    
+    // TODO: Implement with SimpleBridgeDB when needed
+    const response: ApiResponse = {
       success: true,
-      data: deposits,
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages,
-        hasNext: page < totalPages,
-        hasPrev: page > 1,
-      },
+      data: [],
+      message: 'Feature temporarily disabled - database migration in progress',
       timestamp: new Date().toISOString(),
     };
 
@@ -152,18 +123,11 @@ export class BridgeController {
   async getDepositById(req: Request, res: Response): Promise<void> {
     const { depositId } = req.params;
 
-    const db = getDatabase();
-    const deposit = await db.bridgeDeposit.findUnique({
-      where: { depositId },
-    });
-
-    if (!deposit) {
-      throw new AppError('Deposit not found', 404);
-    }
-
+    // TODO: Implement with SimpleBridgeDB when needed
     const response: ApiResponse = {
       success: true,
-      data: deposit,
+      data: null,
+      message: 'Feature temporarily disabled - database migration in progress',
       timestamp: new Date().toISOString(),
     };
 
@@ -171,84 +135,22 @@ export class BridgeController {
   }
 
   async getBridgeStats(req: Request, res: Response): Promise<void> {
-    const db = getDatabase();
-
-    const [
-      totalDeposits,
-      completedBridges,
-      pendingBridges,
-      failedBridges,
-      volumeResult,
-    ] = await Promise.all([
-      db.bridgeDeposit.count(),
-      db.bridgeDeposit.count({ where: { status: 'COMPLETED' } }),
-      db.bridgeDeposit.count({ where: { status: 'PENDING' } }),
-      db.bridgeDeposit.count({ where: { status: 'FAILED' } }),
-      db.bridgeDeposit.findMany({
-        where: { status: 'COMPLETED' },
-        select: { amount: true },
-      }),
-    ]);
-
-    // Calculate total volume
-    const totalVolume = volumeResult.reduce((sum, deposit) => {
-      return sum + BigInt(deposit.amount);
-    }, BigInt(0));
-
-    // Get daily volume for last 30 days
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-
-    const dailyDeposits = await db.bridgeDeposit.findMany({
-      where: {
-        status: 'COMPLETED',
-        completedAt: { gte: thirtyDaysAgo },
-      },
-      select: {
-        amount: true,
-        completedAt: true,
-      },
-    });
-
-    const dailyVolume: Record<string, string> = {};
-    dailyDeposits.forEach(deposit => {
-      if (deposit.completedAt) {
-        const date = deposit.completedAt.toISOString().split('T')[0]!;
-        const currentVolume = BigInt(dailyVolume[date] || '0');
-        dailyVolume[date] = (currentVolume + BigInt(deposit.amount)).toString();
-      }
-    });
-
-    // Get token stats
-    const tokenDeposits = await db.bridgeDeposit.findMany({
-      where: { status: 'COMPLETED' },
-      select: { token: true, amount: true },
-    });
-
-    const tokenStats: Record<string, { volume: string; count: number }> = {};
-    tokenDeposits.forEach(deposit => {
-      if (!tokenStats[deposit.token]) {
-        tokenStats[deposit.token] = { volume: '0', count: 0 };
-      }
-      const currentVolume = BigInt(tokenStats[deposit.token]!.volume);
-      tokenStats[deposit.token]!.volume = (currentVolume + BigInt(deposit.amount)).toString();
-      tokenStats[deposit.token]!.count++;
-    });
-
+    // TODO: Implement with SimpleBridgeDB when needed
     const stats: BridgeStats = {
-      totalDeposits,
-      totalVolume: totalVolume.toString(),
-      completedBridges,
-      pendingBridges,
-      failedBridges,
-      averageProcessingTime: 0, // TODO: Calculate from database
-      dailyVolume,
-      tokenStats,
+      totalDeposits: 0,
+      totalVolume: '0',
+      completedBridges: 0,
+      pendingBridges: 0,
+      failedBridges: 0,
+      averageProcessingTime: 0,
+      dailyVolume: {},
+      tokenStats: {},
     };
 
     const response: ApiResponse<BridgeStats> = {
       success: true,
       data: stats,
+      message: 'Stats temporarily disabled - database migration in progress',
       timestamp: new Date().toISOString(),
     };
 
